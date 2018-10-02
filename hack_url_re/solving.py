@@ -3,9 +3,11 @@ import logging
 from typing import Iterable, List, Tuple, Dict
 
 import z3
+import toolz as tz
 
 from .compiling import RegexStringExpr
 from .constants import cc_tlds
+from .abstracting import concretizations
 
 DEBUG = False
 logger = logging.getLogger(__name__)
@@ -58,20 +60,21 @@ def public_vars(model):
 WILDCARD_MARKER = '<'
 OUTPUT_WILDCARD_MARKER = '☠'  # skull emoji
 
-def add_regex_constraints(solver, regex, max_length=None):
+def add_regex_constraints(solver, regex, max_length=None, symbolic=False) -> Dict[int, List[str]]:
     if max_length is None:
         # TODO: get max length from parsed regex.
         max_length = len(regex) + 15
 
     # WILDCARD_MARKER is not a valid URL char. Note that wildcards match ':' and '/'
-    rs = RegexStringExpr(regex, unknown_string, dot_charset=WILDCARD_MARKER)
+    rs = RegexStringExpr(regex, unknown_string, dot_charset=WILDCARD_MARKER, symbolic=symbolic)
     expr = rs.re_expr()
     solver.add(expr)
 
     solver.add(z3.Length(unknown_string) <= max_length)
+    return rs.symbols
 
 
-def wildcard_trace(solver, use_priming=True) -> Tuple[z3.CheckSatResult, Dict]:
+def wildcard_trace(solver, symbols: Dict[int, List[str]], use_priming=True) -> Tuple[z3.CheckSatResult, Dict]:
     """Return the result of the attack (sat means attack was successful) and associated data.
 
     If the attack was successful, associated data includes what attack was executed, witness
@@ -126,18 +129,20 @@ def wildcard_trace(solver, use_priming=True) -> Tuple[z3.CheckSatResult, Dict]:
                                    z3.Contains(proto + fqdn, z3.StringVal(WILDCARD_MARKER)))
 
     if result == z3.sat:
+        _conc1 = lambda zs: tz.first(concretizations(z3_str_to_bytes(zs), symbols))
         logger.info(public_vars(model))
         ans = z3.simplify(model[proto] + model[proto_delimiter] + model[fqdn])
         return result, {
-            'solution': z3_str_to_str(model[unknown_string]).replace(WILDCARD_MARKER, OUTPUT_WILDCARD_MARKER),
+            'solution': _conc1(model[unknown_string]).replace(WILDCARD_MARKER, OUTPUT_WILDCARD_MARKER),
             'strategy': 'wildcard_trace',
-            'witness': z3_str_to_str(ans).replace(WILDCARD_MARKER, OUTPUT_WILDCARD_MARKER)}
+            'witness': _conc1(ans).replace(WILDCARD_MARKER, OUTPUT_WILDCARD_MARKER)}
     else:
         return result, {'strategy': 'wildcard_trace',
                         'debug_info': None}
 
 
-def find_n_root_domains_ignoring_wildcards(solver: z3.Solver, require_literal_dot_in_domain: bool,
+def find_n_root_domains_ignoring_wildcards(solver: z3.Solver, symbols: Dict[int, List[str]],
+                                           require_literal_dot_in_domain: bool,
                                            levels: int, max_finds: int):
     """If enough root domains are found, report vulnerability.
 
@@ -202,15 +207,16 @@ def find_n_root_domains_ignoring_wildcards(solver: z3.Solver, require_literal_do
             )))
 
         results = []
-        found = []
-        found_root_domains = []
+        found = set()
+        found_root_domains = set()
         result = z3.sat
 
         logger.info('searching for n root_domains')
 
+        _concs = lambda zs: concretizations(z3_str_to_bytes(zs), symbols)
         solution = None
 
-        while len(found) < max_finds and result == z3.sat:
+        while len(found_root_domains) < max_finds and result == z3.sat:
             result = solver.check()
             results.append(result)
             if result == z3.sat:
@@ -218,12 +224,11 @@ def find_n_root_domains_ignoring_wildcards(solver: z3.Solver, require_literal_do
                 _root_domain = model[root_domain]
                 parts = (model[proto], model[proto_delimiter], model[fqdn])
                 assert all(part is not None for part in parts)
-                _base_url = z3.simplify(z3.Concat(*parts))
                 logger.info(public_vars(model))
-                found.append(z3_str_to_str(_base_url))
-                found_root_domains.append(z3_str_to_str(_root_domain))
+                found.update(_concs(z3.simplify(z3.Concat(*parts))))
+                found_root_domains.update(_concs(_root_domain))
                 solver.add(root_domain != _root_domain)
-                solution = z3_str_to_str(model[unknown_string])
+                solution = tz.first(_concs(model[unknown_string]))
 
         # if not sat, return the would-be witness for debugging
         if result == z3.sat:
@@ -232,8 +237,8 @@ def find_n_root_domains_ignoring_wildcards(solver: z3.Solver, require_literal_do
             root_domains_label = 'root_domains'
 
         return result, {'strategy': 'find_n_root_domains_ignoring_wildcards',
-                        'found': found,
-                        root_domains_label: found_root_domains,
+                        'found': list(found),
+                        root_domains_label: list(found_root_domains),
                         'levels': levels,
                         'solution': solution}
 
@@ -246,10 +251,11 @@ def combine_sat_results(r1, r2):
         return z3.unknown
 
 def combination_wildcard_and_find_n(solver,
+                                    symbols: Dict[int, List[str]],
                                     require_literal_dot_in_domain=False,
                                     max_finds=10):
 
-    result1, report1 = wildcard_trace(solver)
+    result1, report1 = wildcard_trace(solver, symbols)
     logger.info('wildcard_trace results: %s %s', result1, report1)
     if result1 == z3.sat:
         return result1, report1
@@ -258,6 +264,7 @@ def combination_wildcard_and_find_n(solver,
         # Note find_n_root_domains_ignoring_wildcards requires some definitions from wildcard_trace
         # and cannot be run independently.
         result2, report2 = find_n_root_domains_ignoring_wildcards(solver,
+                                                                  symbols,
                                                                   require_literal_dot_in_domain,
                                                                   levels=2,
                                                                   max_finds=max_finds)
@@ -272,6 +279,7 @@ def combination_wildcard_and_find_n(solver,
         else:
 
             result3, report3 = find_n_root_domains_ignoring_wildcards(solver,
+                                                                      symbols,
                                                                       require_literal_dot_in_domain,
                                                                       levels=3,
                                                                       max_finds=max_finds)
@@ -290,7 +298,8 @@ def combination_wildcard_and_find_n(solver,
                 return (z3.sat if len(found_root_domains_3) >= max_finds else combined_result_3,
                         {'solution': report3['solution'],
                          'strategy': report3['strategy'],
-                         'found': report2['found'] + report3['found'],
+                         'found': report2['found'] + [elt for elt in report3['found']
+                                                      if elt not in report2['found']],
                          'witness': found_root_domains_3})
 
 

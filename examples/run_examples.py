@@ -83,8 +83,8 @@ if True:
         solver = z3.Solver()
 
         with solver_frame(solver):
-            add_regex_constraints(solver, r'.*' + ex + r'.*')
-            result, evidence = strategy(solver)
+            symbols = add_regex_constraints(solver, r'.*' + ex + r'.*')
+            result, evidence = strategy(solver, symbols)
 
         warnings = get_warnings(ex)
 

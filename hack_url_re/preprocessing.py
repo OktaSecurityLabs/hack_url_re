@@ -6,10 +6,11 @@ import string
 import toolz
 import enum
 import logging
-from typing import Iterable, Tuple
+from typing import Iterable, Tuple, Dict, Sequence
 
 from . import parsing
 from .parsing import (PToken, EMPTY, CHAR, DOT, STAR, BAR, CONCAT, GROUP, BACKREF, CARET, DOLLAR)
+from .abstracting import SYMBOL_START, SYMBOL_END
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,81 @@ def convert_bars(r: Tuple, cutoff: int = 10) -> Tuple:
     else:
         return tuple(convert_bars(elt) if ii > 0 else elt
                      for ii, elt in enumerate(r))
+
+
+def symbolic_collections(xs: Sequence[str]):
+
+    def _sort(xx):
+        out = ''
+        for cc in xx:
+            in_domain_like_block = (out and out[-1] == 'a')
+            if cc == '.' or cc == '/':
+                out += cc
+            elif not in_domain_like_block:
+                out += 'a'
+        return out
+
+    return toolz.groupby(_sort, xs)
+
+
+def _make_encoded_symbol(signature, nn: int) -> bytes:
+    return SYMBOL_START + hex(nn)[2:].encode('utf8') + SYMBOL_END
+
+
+def convert_to_encoded_symbols(r: Tuple, mapping: Dict[int, Tuple[str]]) -> Tuple[Tuple, Dict[int, Tuple[str]]]:
+    """Convert unions (BARs) of character strings to encoded symbols.
+
+    The symbols are encoded character strings that are illegal in URLs.  Outputs a tuple of
+    processed AST, plus a dictionary mapping the encoded symbols to the concrete values they can
+    take on.
+
+    Each symbol only represents a single type of string. The types are:
+
+    - strings that contain no metachars
+    - strings that contain literal dots
+    - strings that contain a slash
+
+    :param mapping: Mapping of encoded symbols. Mapping gets mutated.
+
+    """
+
+    ty = r[0]
+
+    if ty == BAR and all(elt[0] == PToken.CHAR for elt in r[1:]):
+        num_orig_keys = len(mapping)
+        extension = {}
+        literals = []
+        encoded = {}
+        for sig, cc in symbolic_collections(elt[1] for elt in r[1:]).items():
+            if len(cc) > 1 and sig == 'a':
+                # Only convert signatures that have no domain separator metachars.
+                # Otherwise, fallback to default behavior.
+                k = num_orig_keys + len(extension)
+                encoded[k]: bytes = _make_encoded_symbol(sig, k)
+                extension[k] = cc
+            else:
+                literals.append(cc[0])
+        new_vals = tuple((PToken.CHAR, vv) for vv in toolz.concatv(encoded.values(), literals))
+        new_mapping = toolz.merge(mapping, extension)
+        if len(new_vals) == 1:
+            return (new_vals[0], new_mapping)
+        else:
+            return ((PToken.BAR,) + new_vals, new_mapping)
+    elif ty == PToken.BACKREF:
+        raise NotImplementedError
+    elif ty == PToken.CHAR:
+        return (r, mapping)
+    else:
+        start_idx = 2 if ty == PToken.GROUP else 1
+        elts = []
+        for idx, elt in enumerate(r):
+            if idx >= start_idx:
+                converted, mapping = convert_to_encoded_symbols(elt, mapping)
+                elts.append(converted)
+            else:
+                elts.append(elt)
+
+        return (elts, mapping)
 
 
 def convert_stars(r: Tuple, star_lengths: Iterable[int]) -> Tuple:

@@ -35,25 +35,26 @@ def set_verbose():
     solving.logger.setLevel(logging.INFO)
     compiling.logger.setLevel(logging.INFO)
 
-    
-def solve(regex, quick, require_literal_dot_in_domain, semantics=RegexSemantics.search):
+
+def solve(regex, quick, symbolic, require_literal_dot_in_domain, semantics=RegexSemantics.search):
     solver = z3.Solver()
 
     if semantics == RegexSemantics.search:
         regex = r'.*' + regex + r'.*'
 
     with solving.solver_frame(solver):
-        solving.add_regex_constraints(solver, regex)
+        symbols = solving.add_regex_constraints(solver, regex, symbolic=symbolic)
         if quick:
-            result, evidence = solving.wildcard_trace(solver)
+            result, evidence = solving.wildcard_trace(solver, symbols)
         else:
             result, evidence = solving.combination_wildcard_and_find_n(
                 solver,
+                symbols,
                 require_literal_dot_in_domain=require_literal_dot_in_domain
             )
 
     return result, evidence
-            
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -64,6 +65,11 @@ def main():
     parser.add_argument('--quick', '-q', action='store_true',
                         help='''Applies a quick attack.  Otherwise applies a comprehensive attack,
                         which will find everything that the quick attack does.''')
+
+    parser.add_argument('--symbolic', action='store_true',
+                        help='''Uses symbolic methods. It can speed up analysis for very long and complicated regex, 
+                        but for simpler regex it can slow down analysis. Recommended for use when a particular
+                        regex takes a very long time to analyze.''')
 
     parser.add_argument('--ensure-ascii', action='store_true',
                         help='''Ensure ASCII output.''')
@@ -85,7 +91,8 @@ def main():
     if args.verbose:
         set_verbose()
 
-    result, evidence = solve(regex, quick=args.quick, require_literal_dot_in_domain=args.require_literal_dot_in_domain)
+    result, evidence = solve(regex, quick=args.quick, symbolic=args.symbolic,
+                             require_literal_dot_in_domain=args.require_literal_dot_in_domain)
 
     #stdout.write(json.dumps(regex))
     out = {'result': str(result)}
@@ -94,4 +101,3 @@ def main():
     stdout.write(json.dumps(out, indent=4, separators=(',', ': '), ensure_ascii=args.ensure_ascii))
     stdout.write('\n')
     stdout.flush()
-
