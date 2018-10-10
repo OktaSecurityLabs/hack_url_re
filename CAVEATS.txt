@@ -1,0 +1,24 @@
+- The optional '@' for basic auth is assumed to not be in the URL.
+- Backrefs are not supported. Capturing and non-capturing groups get parsed to the same things.
+- I have removed '#' from the charset. Only dots can produce '#'.
+
+- Lookaheads won't work with the STAR and BAR approximations. (Lookaheads are not implemented in any case.)
+
+- If there's a '<' in the URL regex, like '^https://example\.com</$',
+  it will be reported as a false positive.
+
+- HTTP URLs are not reported. This might be added as a warning in the future.
+
+- Does not work with unicode patterns. There doesn't seem to be a good way to handle unicode 
+  Z3 strings. Note that domains should be in ASCII (see https://en.wikipedia.org/wiki/Punycode),
+  so the lack of unicode support should not be an issue as long as regex patterns do not themselves 
+  contain unicode.
+
+- '\w' is parsed as the '\w' character set for Javascript.
+
+TODO:
+
+- Should warn when the attacker can create an empty domain, like ^https://[^\.]\.example.com\.com(?:$|/)
+- Make some preprocessing, such as opportunistic path removal and dot removal,
+  optional. These preprocessors can cause solutions to not be accepted by the
+  original regex.
