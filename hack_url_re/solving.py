@@ -147,18 +147,7 @@ def find_n_root_domains_ignoring_wildcards(solver: z3.Solver, require_literal_do
     :return: tuple of sat result, witness or debug info
     """
 
-    Not = z3.Not
-    And = z3.And
-    Or = z3.Or
-    Xor = z3.Xor
-    Contains = z3.Contains
-    String = z3.String
-    StringVal = z3.StringVal
-    Length = z3.Length
-    Implies = z3.Implies
-    PrefixOf = z3.PrefixOf
-    SuffixOf = z3.SuffixOf
-    Concat = z3.Concat
+    from z3 import Not, And, Or, Xor, Contains, String, StringVal, Length, Implies, SuffixOf, Concat
 
     tld = String('tld')
     sld = String('sld')
