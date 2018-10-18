@@ -6,11 +6,12 @@ import string
 import toolz
 import enum
 import logging
+import itertools
 from typing import Iterable, Tuple, Set
 
 from . import parsing
 from .parsing import (PToken, EMPTY, CHAR, DOT, STAR, BAR, CONCAT, GROUP, BACKREF, CARET, DOLLAR)
-from .preprocessing import (convert_stars, convert_bars, flatten_regex, remove_path)
+from .preprocessing import (convert_stars, convert_bars, flatten_regex, remove_path, convert_to_encoded_symbols)
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,8 @@ class RegexStringExpr:
     def __init__(self, regex: str, unknown: z3.StringSort(),
                  word_choice_cutoff=10,
                  dot_charset=DEFAULT_DOT_CHARSET,
-                 star_lengths: Iterable[int] = DEFAULT_STAR_LENGTHS):
+                 star_lengths: Iterable[int] = DEFAULT_STAR_LENGTHS,
+                 symbolic=False):
         """
         Compiles Regex to Z3 String expressions
 
@@ -57,6 +59,8 @@ class RegexStringExpr:
         self.string_var_count = 0
         self.bool_var_count = 0
 
+        self.symbolic = symbolic
+
         _parser = parsing.RegexParser()
         parse_result = _parser.parse(regex)
         self.parsing_errors = parse_result['errors']
@@ -64,7 +68,11 @@ class RegexStringExpr:
         regex_1 = remove_path(regex_0)
         regex_2 = convert_stars(regex_1, star_lengths)
         regex_3 = convert_bars(regex_2, cutoff=word_choice_cutoff)
-        self.regex = regex_3
+        if symbolic:
+            regex_4, self.symbols = convert_to_encoded_symbols(regex_3, {})
+        else:
+            regex_4, self.symbols = regex_3, {}
+        self.regex = regex_4
         assert self.regex
         self.groups = parse_result['groups']
         self.backrefs = parse_result['backrefs']
