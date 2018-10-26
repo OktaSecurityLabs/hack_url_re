@@ -207,6 +207,10 @@ place of the ☠☠☠☠.
   could be implemented but was not necessary for Okta's use case.
 
 
+## Troubleshooting
+
+- Sometimes hack_url_re gets stuck, and it can help to restart. It seems that
+  Z3 can get into a bad state.
 
 
 ## Attribution
