@@ -14,7 +14,7 @@ requirements = ['ply==3.11', 'toolz==0.9.0']
 try:
     import z3
 except ImportError:
-    requirements += ['z3-solver==4.8.0.0.post1']
+    requirements += ['z3-solver==4.8.10.0']
 
 _package_info = (
     _json.loads(_Path(__file__).parent.joinpath('hack_url_re', 'package_info.json').read_text()))
